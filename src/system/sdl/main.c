@@ -48,7 +48,14 @@ extern void gotoMenu(Studio* studio);
 #include <emscripten.h>
 #endif
 
-#if defined(__APPLE__)
+#if defined(__TIC_IOS__)
+const char* tic80_ios_documents_path(void);
+void tic80_ios_prepare_audio_session(void);
+const char* tic80_ios_take_pending_cart_path(void);
+void tic80_ios_safe_area_insets(int* top, int* left, int* bottom, int* right);
+#endif
+
+#if defined(__APPLE__) && !defined(__TIC_IOS__)
 # if MAC_OS_X_VERSION_MIN_REQUIRED < 1060
 #    error SDL for Mac OS X only supports deploying on 10.6 and above.
 # endif /* MAC_OS_X_VERSION_MIN_REQUIRED < 1060 */
@@ -389,6 +396,63 @@ static void updateTextureBytes(Texture texture, const void* data, s32 width, s32
     }
 }
 
+static void getWindowContentRect(SDL_Rect* rect)
+{
+    SDL_GetWindowSize(platform.window, &rect->w, &rect->h);
+    rect->x = 0;
+    rect->y = 0;
+
+#if defined(__TIC_IOS__)
+    {
+        int top = 0;
+        int left = 0;
+        int bottom = 0;
+        int right = 0;
+        tic80_ios_safe_area_insets(&top, &left, &bottom, &right);
+
+        if(left < 0) left = 0;
+        if(top < 0) top = 0;
+        if(right < 0) right = 0;
+        if(bottom < 0) bottom = 0;
+
+        if(left + right < rect->w)
+        {
+            rect->x = left;
+            rect->w -= left + right;
+        }
+
+        if(top + bottom < rect->h)
+        {
+            rect->y = top;
+            rect->h -= top + bottom;
+        }
+    }
+#endif
+}
+
+#if defined(__TIC_IOS__)
+static s32 getIOSLandscapeGamepadTileSize(const SDL_Rect* rect)
+{
+    return MIN(rect->h / 4, rect->w / 14);
+}
+
+static void insetIOSLandscapeGameBounds(SDL_Rect* rect)
+{
+    if(rect->w <= rect->h)
+        return;
+
+    s32 tileSize = getIOSLandscapeGamepadTileSize(rect);
+    s32 margin = tileSize / 4;
+    s32 inset = tileSize * 3 + margin;
+
+    if(inset * 2 + TIC80_FULLWIDTH <= rect->w)
+    {
+        rect->x += inset;
+        rect->w -= inset * 2;
+    }
+}
+#endif
+
 #if defined(TOUCH_INPUT_SUPPORT)
 
 static void drawKeyboardLabels(tic_mem* tic, s32 shift)
@@ -466,28 +530,71 @@ static void updateGamepadParts()
     SDL_Rect rect;
 
     const s32 JoySize = 3;
-    SDL_GetWindowSize(platform.window, &rect.w, &rect.h);
+    getWindowContentRect(&rect);
 
     if(rect.w < rect.h)
     {
         tileSize = rect.w / 2 / JoySize;
-        offset = (rect.h * 2 - JoySize * tileSize) / 3;
+        offset = rect.y + (rect.h * 2 - JoySize * tileSize) / 3;
+
+        platform.gamepad.touch.button.axis = (SDL_Point){rect.x, offset};
+        platform.gamepad.touch.button.a = (SDL_Point){rect.x + rect.w - 2*tileSize, 2*tileSize + offset};
+        platform.gamepad.touch.button.b = (SDL_Point){rect.x + rect.w - 1*tileSize, 1*tileSize + offset};
+        platform.gamepad.touch.button.x = (SDL_Point){rect.x + rect.w - 3*tileSize, 1*tileSize + offset};
+        platform.gamepad.touch.button.y = (SDL_Point){rect.x + rect.w - 2*tileSize, 0*tileSize + offset};
     }
     else
     {
+#if defined(__TIC_IOS__)
+        tileSize = getIOSLandscapeGamepadTileSize(&rect);
+        s32 margin = tileSize / 4;
+        s32 right = rect.x + rect.w - margin - 3 * tileSize;
+
+        offset = rect.y + (rect.h - JoySize * tileSize) / 2;
+
+        platform.gamepad.touch.button.axis = (SDL_Point){rect.x + margin, offset};
+        platform.gamepad.touch.button.a = (SDL_Point){right + tileSize, 2*tileSize + offset};
+        platform.gamepad.touch.button.b = (SDL_Point){right + 2*tileSize, tileSize + offset};
+        platform.gamepad.touch.button.x = (SDL_Point){right, tileSize + offset};
+        platform.gamepad.touch.button.y = (SDL_Point){right + tileSize, offset};
+#else
         tileSize = rect.w / 5 / JoySize;
-        offset = (rect.h - JoySize * tileSize) / 2;
+        offset = rect.y + (rect.h - JoySize * tileSize) / 2;
+
+        platform.gamepad.touch.button.axis = (SDL_Point){rect.x, offset};
+        platform.gamepad.touch.button.a = (SDL_Point){rect.x + rect.w - 2*tileSize, 2*tileSize + offset};
+        platform.gamepad.touch.button.b = (SDL_Point){rect.x + rect.w - 1*tileSize, 1*tileSize + offset};
+        platform.gamepad.touch.button.x = (SDL_Point){rect.x + rect.w - 3*tileSize, 1*tileSize + offset};
+        platform.gamepad.touch.button.y = (SDL_Point){rect.x + rect.w - 2*tileSize, 0*tileSize + offset};
+#endif
     }
 
     platform.gamepad.touch.button.size = tileSize;
-    platform.gamepad.touch.button.axis = (SDL_Point){0, offset};
-    platform.gamepad.touch.button.a = (SDL_Point){rect.w - 2*tileSize, 2*tileSize + offset};
-    platform.gamepad.touch.button.b = (SDL_Point){rect.w - 1*tileSize, 1*tileSize + offset};
-    platform.gamepad.touch.button.x = (SDL_Point){rect.w - 3*tileSize, 1*tileSize + offset};
-    platform.gamepad.touch.button.y = (SDL_Point){rect.w - 2*tileSize, 0*tileSize + offset};
-
     platform.keyboard.touch.button.size = rect.w < rect.h ? tileSize : 0;
-    platform.keyboard.touch.button.pos = (SDL_Point){rect.w/2 - tileSize, rect.h - 2*tileSize};
+    platform.keyboard.touch.button.pos = (SDL_Point){rect.x + rect.w/2 - tileSize, rect.y + rect.h - 2*tileSize};
+}
+#endif
+
+#if defined(__TIC_IOS__)
+static void syncIOSRendererLogicalSize()
+{
+#if defined(CRT_SHADER_SUPPORT)
+    if(!studio_config(platform.studio)->soft)
+        return;
+#endif
+
+    if(platform.window && platform.screen.renderer.sdl)
+    {
+        s32 width = 0;
+        s32 height = 0;
+        SDL_GetWindowSize(platform.window, &width, &height);
+
+        if(width > 0 && height > 0)
+        {
+            SDL_RenderSetIntegerScale(platform.screen.renderer.sdl, SDL_FALSE);
+            SDL_RenderSetLogicalSize(platform.screen.renderer.sdl, width, height);
+        }
+    }
 }
 #endif
 
@@ -588,6 +695,10 @@ static void initGPU()
             SDL_TEXTUREACCESS_STREAMING, TIC80_FULLWIDTH, TIC80_FULLHEIGHT);
     }
 
+#if defined(__TIC_IOS__)
+    syncIOSRendererLogicalSize();
+#endif
+
 #if defined(TOUCH_INPUT_SUPPORT)
     initTouchGamepad();
     initTouchKeyboard();
@@ -632,10 +743,20 @@ static void destroyGPU()
 
 static void calcTextureRect(SDL_Rect* rect)
 {
+#if defined(__TIC_IOS__)
+    bool integerScale = false;
+#else
     bool integerScale = studio_config(platform.studio)->options.integerScale;
+#endif
 
+    SDL_Rect bounds;
     s32 sw, sh, w, h;
-    SDL_GetWindowSize(platform.window, &sw, &sh);
+    getWindowContentRect(&bounds);
+#if defined(__TIC_IOS__)
+    insetIOSLandscapeGameBounds(&bounds);
+#endif
+    sw = bounds.w;
+    sh = bounds.h;
 
     enum{Width = TIC80_FULLWIDTH, Height = TIC80_FULLHEIGHT};
 
@@ -652,12 +773,12 @@ static void calcTextureRect(SDL_Rect* rect)
 
     *rect = (SDL_Rect)
     {
-        (sw - w) / 2,
+        bounds.x + (sw - w) / 2,
 #if defined (TOUCH_INPUT_SUPPORT)
         // snap the screen up to get a place for the software keyboard
-        sw > sh ? (sh - h) / 2 : 0,
+        bounds.y + (sw > sh ? (sh - h) / 2 : 0),
 #else
-        (sh - h) / 2,
+        bounds.y + (sh - h) / 2,
 #endif
         w, h
     };
@@ -758,6 +879,20 @@ static void processKeyboard()
 
 static bool checkTouch(const SDL_Rect* rect, s32* x, s32* y)
 {
+    {
+        SDL_Point point;
+
+        if(SDL_GetMouseState(&point.x, &point.y) & SDL_BUTTON_LMASK)
+        {
+            if(SDL_PointInRect(&point, rect))
+            {
+                *x = point.x;
+                *y = point.y;
+                return true;
+            }
+        }
+    }
+
     s32 devices = SDL_GetNumTouchDevices();
     s32 width = 0, height = 0;
     SDL_GetWindowSize(platform.window, &width, &height);
@@ -1038,6 +1173,10 @@ static void processGamepad()
 static void processTouchInput()
 {
     s32 devices = SDL_GetNumTouchDevices();
+    SDL_Point point;
+
+    if(SDL_GetMouseState(&point.x, &point.y) & SDL_BUTTON_LMASK)
+        platform.gamepad.touch.counter = TOUCH_TIMEOUT;
 
     for (s32 i = 0; i < devices; i++)
         if(SDL_GetNumTouchFingers(SDL_GetTouchDevice(i)) > 0)
@@ -1214,6 +1353,10 @@ static void pollEvents()
                         GPU_SetWindowResolution(w, h);
                         GPU_SetVirtualResolution(platform.screen.renderer.gpu, w, h);
                     }
+#endif
+
+#if defined(__TIC_IOS__)
+                    syncIOSRendererLogicalSize();
 #endif
 
 #if defined(TOUCH_INPUT_SUPPORT)
@@ -1405,6 +1548,10 @@ static const char* getAppFolder()
         const char AppFolder[] = "/" TIC_NAME "/";
         strcat(appFolder, AppFolder);
         mkdir(appFolder, 0777);
+
+#elif defined(__TIC_IOS__)
+
+        strcpy(appFolder, tic80_ios_documents_path());
 
 #elif defined(__SWITCH__)
 
@@ -1788,6 +1935,9 @@ static void gpuTick()
         studio_tick(platform.studio, platform.input);
     }
 
+#if defined(__TIC_IOS__)
+    syncIOSRendererLogicalSize();
+#endif
     renderClear(platform.screen.renderer);
     updateTextureBytes(platform.screen.texture, tic->product.screen, TIC80_FULLWIDTH, TIC80_FULLHEIGHT);
 
@@ -1940,6 +2090,15 @@ static s32 start(s32 argc, char **argv, const char* folder)
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
 #endif
 
+#if defined(__TIC_IOS__)
+    tic80_ios_prepare_audio_session();
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "metal");
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight Portrait");
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "1");
+#endif
+
 #ifdef __SWITCH__
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
 #endif
@@ -1965,6 +2124,15 @@ static s32 start(s32 argc, char **argv, const char* folder)
 
     platform.studio = studio_create(argc, argv, TIC80_SAMPLERATE, SCREEN_FORMAT, folder, determineMaximumScale(), detect_keyboard_layout());
 
+#if defined(__TIC_IOS__)
+    {
+        const char* pendingCart = tic80_ios_take_pending_cart_path();
+
+        if(pendingCart)
+            studio_load(platform.studio, pendingCart);
+    }
+#endif
+
     SCOPE(studio_delete(platform.studio))
     {
         if (studio_config(platform.studio)->cli)
@@ -1977,14 +2145,29 @@ static s32 start(s32 argc, char **argv, const char* folder)
             initSound();
 
             {
-                const s32 Width = TIC80_FULLWIDTH * studio_config(platform.studio)->uiScale;
-                const s32 Height = TIC80_FULLHEIGHT * studio_config(platform.studio)->uiScale;
+                s32 Width = TIC80_FULLWIDTH * studio_config(platform.studio)->uiScale;
+                s32 Height = TIC80_FULLHEIGHT * studio_config(platform.studio)->uiScale;
 
                 s32 flags = SDL_WINDOW_SHOWN
 #if !defined(__EMSCRIPTEN__) && !defined(__MACOSX__)
                         | SDL_WINDOW_ALLOW_HIGHDPI
 #endif
                         | SDL_WINDOW_RESIZABLE;
+
+#if defined(__TIC_IOS__)
+                {
+                    SDL_DisplayMode mode;
+
+                    flags |= SDL_WINDOW_FULLSCREEN;
+                    flags &= ~SDL_WINDOW_RESIZABLE;
+
+                    if(SDL_GetCurrentDisplayMode(0, &mode) == 0 && mode.w > 0 && mode.h > 0)
+                    {
+                        Width = mode.w;
+                        Height = mode.h;
+                    }
+                }
+#endif
 
 #if defined(CRT_SHADER_SUPPORT)
 
@@ -1993,6 +2176,12 @@ static s32 start(s32 argc, char **argv, const char* folder)
 #endif
 
                 platform.window = SDL_CreateWindow(TIC_TITLE, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, Width, Height, flags);
+
+#if defined(__TIC_IOS__)
+                if(platform.window)
+                    SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN);
+                platform.mouse.focus = true;
+#endif
 
                 setWindowIcon();
                 initGPU();

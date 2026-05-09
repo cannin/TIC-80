@@ -41,7 +41,7 @@
 #include <ctype.h>
 #include <string.h>
 
-#if !defined(__TIC_MACOSX__)
+#if !defined(__TIC_MACOSX__) && !defined(__TIC_IOS__)
 #include <malloc.h>
 #endif
 

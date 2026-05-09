@@ -192,3 +192,7 @@ include(cmake/n3ds.cmake)
 include(cmake/nswitch.cmake)
 
 include(cmake/install.cmake)
+
+if(TIC80_EXTRA_CMAKE)
+    include("${TIC80_EXTRA_CMAKE}")
+endif()

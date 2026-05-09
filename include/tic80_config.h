@@ -26,11 +26,14 @@
 // TODO: this disables macos config
 #   include "AvailabilityMacros.h"
 #   include "TargetConditionals.h"
-// #    ifndef TARGET_OS_IPHONE
+#   if TARGET_OS_IPHONE
+#       undef __TIC_IOS__
+#       define __TIC_IOS__ 1
+#   else
 #       undef __TIC_MACOSX__
 #       define __TIC_MACOSX__ 1
 #       define TIC_MODULE_EXT ".dylib"
-// #    endif /* TARGET_OS_IPHONE */
+#   endif /* TARGET_OS_IPHONE */
 #endif /* defined(__APPLE__) */
 
 #if !defined(__LIBRETRO__)
